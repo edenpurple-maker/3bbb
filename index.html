@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boyfriend Builder Brawl</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#f5f0eb;font-family:'Courier New',monospace;display:flex;justify-content:center;align-items:center;min-height:100vh}
+canvas{display:block;touch-action:none;max-width:100%;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ── Supabase config ──
+const SUPABASE_URL = 'https://ixyfkixnulqcgeasxauw.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml4eWZraXhudWxxY2dlYXN4YXV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5OTU1MDYsImV4cCI6MjA5NTU3MTUwNn0.JCVCIBIrX1p60ThnURXw8sUFkFARpjm4VGKWW87NmLY';
+
+async function saveRoom(code, data) {
+  await fetch(`${SUPABASE_URL}/rest/v1/rooms`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Prefer': 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify({code, data}),
+  });
+}
+
+async function loadRoom(code) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rooms?code=eq.${code}&select=data`, {
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+    },
+  });
+  const rows = await res.json();
+  return rows && rows.length ? rows[0].data : null;
+}
+
+// ── Canvas ──
+const C = document.getElementById('c');
+const ctx = C.getContext('2d');
+const W = 680, H = 500;
+C.width = W; C.height = H;
+
+// ── Palette ──
+const COL = {
+  lightGreen:'#A8DCAB', darkGreen:'#519755',
+  blush:'#DBAAA7', lilac:'#BE91BE',
+  dark:'#2c2c2c', mid:'#6b6b6b',
+  white:'#ffffff', cream:'#faf6f0', gold:'#f1c40f'
+};
+
+// ── Data ──
+const SKINS = ['#FDDBB4','#F1A96B','#C68642','#8D5524','#4A2C17'];
+const EYES  = ['#3A7BD5','#2E8B57','#8B4513','#555555'];
+const HAIR_COLORS = [
+  {label:'Black',  color:'#1a1a1a'},
+  {label:'Brown',  color:'#4a3000'},
+  {label:'Blonde', color:'#f0c040'},
+  {label:'Red',    color:'#cc2200'},
+  {label:'Auburn', color:'#5c3317'},
+  {label:'Gray',   color:'#888888'},
+];
+const SHIRTS = [
+  {label:'Blue',   color:'#3498db'},
+  {label:'Forest', color:'#519755'},
+  {label:'Cream',  color:'#faf0e6'},
+  {label:'Stripe', color:'#f0f0f0', stripe:true},
+];
+const PANTS = [
+  {label:'Forest',  color:'#3a6b3c'},
+  {label:'Slate',   color:'#607d8b'},
+  {label:'Bark',    color:'#6b4c2a'},
+  {label:'Charcoal',color:'#3c3c3c'},
+];
+const SHOES = [
+  {label:'White', color:'#f4f0ec', sole:'#d0c8c0'},
+  {label:'Black', color:'#2c2c2c', sole:'#555555'},
+];
+const MOVES = [
+  {label:'👊 JAB',        sub:'1 dmg',       move:'jab',        color:'#e8c4c0'},
+  {label:'🦵 ROUNDHOUSE', sub:'beats all',   move:'roundhouse', color:'#d4b8d4'},
+  {label:'💨 DODGE',      sub:'blocks 1 hit',move:'dodge',      color:'#b8d8b8'},
+  {label:'👋 SLAP',       sub:'1 dmg',       move:'slap',       color:'#e8d4b8'},
+  {label:'⬆️ UPPERCUT',  sub:'1 dmg',       move:'uppercut',   color:'#b8c8e8'},
+  {label:'🦿 KNEE',       sub:'1 dmg',       move:'knee',       color:'#d4c4b8'},
+  {label:'👨‍❤️‍💋‍👨',         sub:'love wins?',  move:'kiss',       color:'#f7c5d0'},
+];
+const MAX_HP = 5;
+
+// ── State ──
+let state = 'lobby';
+let btns = [];
+let testMode = false;
+let myPlayer = 1;
+let roomCode = null;
+let pollTimer = null;
+let statusMsg = '';
+let joinInput = '';
+let joinActive = false;
+let revealResult = null;
+let gameData = null;
+let confetti = [];
+let chars = [
+  {skin:0, eye:0, hair:0, shirt:0, pants:0, shoe:0},
+  {skin:2, eye:1, hair:3, shirt:1, pants:2, shoe:1},
+];
+function myChar() { return chars[myPlayer - 1]; }
+
+// ── Confetti ──
+function spawnConfetti() {
+  confetti = [];
+  const cols = [COL.lightGreen,COL.darkGreen,COL.blush,COL.lilac,COL.gold,'#3498db','#f0c040'];
+  for (let i = 0; i < 130; i++) {
+    confetti.push({
+      x:Math.random()*W, y:-20-Math.random()*160,
+      vx:(Math.random()-0.5)*4, vy:2+Math.random()*4,
+      w:6+Math.random()*8, h:4+Math.random()*5,
+      rot:Math.random()*Math.PI*2, vrot:(Math.random()-0.5)*0.2,
+      col:cols[Math.floor(Math.random()*cols.length)],
+    });
+  }
+}
+function tickConfetti() {
+  confetti.forEach(p => {
+    p.x+=p.vx; p.y+=p.vy; p.rot+=p.vrot;
+    if (p.y > H+20) p.y = -20;
+  });
+}
+function drawConfetti() {
+  confetti.forEach(p => {
+    ctx.save();
+    ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+    ctx.fillStyle=p.col; ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h);
+    ctx.restore();
+  });
+}
+
+// ── Helpers ──
+function makeCode() {
+  return Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*23)]).join('');
+}
+function freshGameData(code) {
+  return {
+    code, p1char:null, p2char:null,
+    p1ready:false, p2ready:false,
+    p1move:null, p2move:null,
+    hp:[MAX_HP,MAX_HP],
+    winner:null, round:0, randomizerUsed:false,
+  };
+}
+
+// ── Actions ──
+function startTestMode() {
+  testMode=true; myPlayer=1;
+  chars=[
+    {skin:0,eye:0,hair:0,shirt:0,pants:0,shoe:0},
+    {skin:2,eye:1,hair:3,shirt:1,pants:2,shoe:1},
+  ];
+  gameData=freshGameData('TEST');
+  state='build';
+}
+
+async function createRoom() {
+  roomCode=makeCode(); myPlayer=1;
+  chars[0]={skin:0,eye:0,hair:0,shirt:0,pants:0,shoe:0};
+  gameData=freshGameData(roomCode);
+  await saveRoom(roomCode,gameData);
+  state='build'; startPolling();
+}
+
+async function joinRoom() {
+  const code=joinInput.trim().toUpperCase();
+  if (code.length!==4){statusMsg='enter a 4-letter code';return;}
+  roomCode=code;
+  const data=await loadRoom(roomCode);
+  if (!data){statusMsg='room not found!';roomCode=null;return;}
+  myPlayer=2;
+  chars[1]={skin:0,eye:0,hair:0,shirt:0,pants:0,shoe:0};
+  gameData=data; state='build'; startPolling();
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer=setInterval(async()=>{
+    if (!roomCode) return;
+    const data=await loadRoom(roomCode);
+    if (!data) return;
+    gameData=data;
+    if (state==='waiting_other'&&data.p1char&&data.p2char&&data.p1ready&&data.p2ready)
+      state='fight_secret';
+    if (state==='fight_waiting'&&data.p1move!==null&&data.p2move!==null){
+      resolveRound(data); state='fight_reveal';
+    }
+  },1500);
+}
+
+async function doneBuild() {
+  if (testMode) {
+    gameData['p'+myPlayer+'char']={...chars[myPlayer-1]};
+    if (myPlayer===1){myPlayer=2;state='build';}
+    else{myPlayer=1;state='fight_secret';}
+  } else {
+    const data=await loadRoom(roomCode)||{...gameData};
+    if (myPlayer===1){data.p1char={...chars[0]};data.p1ready=true;}
+    else             {data.p2char={...chars[1]};data.p2ready=true;}
+    gameData=data; await saveRoom(roomCode,data);
+    state=(myPlayer===1?data.p2ready:data.p1ready)?'fight_secret':'waiting_other';
+  }
+}
+
+async function pickMove(move) {
+  if (testMode) {
+    gameData['p'+myPlayer+'move']=move;
+    if (myPlayer===1){myPlayer=2;state='fight_secret';}
+    else{myPlayer=1;resolveRound(gameData);state='fight_reveal';}
+  } else {
+    const data=await loadRoom(roomCode)||{...gameData};
+    if (myPlayer===1) data.p1move=move; else data.p2move=move;
+    gameData=data; await saveRoom(roomCode,data);
+    const otherMoved=myPlayer===1?(data.p2move!==null):(data.p1move!==null);
+    if (otherMoved){resolveRound(data);state='fight_reveal';}
+    else state='fight_waiting';
+  }
+}
+
+async function doNextRound() {
+  gameData.p1move=null; gameData.p2move=null;
+  gameData.winner=null; gameData.round=(gameData.round||0)+1;
+  revealResult=null; confetti=[];
+  if (!testMode) await saveRoom(roomCode,gameData);
+  myPlayer=1; state='fight_secret';
+}
+
+function doRestart() {
+  if (pollTimer) clearInterval(pollTimer);
+  state='lobby'; testMode=false; myPlayer=1; roomCode=null;
+  pollTimer=null; statusMsg=''; joinInput=''; joinActive=false;
+  revealResult=null; gameData=null; confetti=[];
+  chars=[
+    {skin:0,eye:0,hair:0,shirt:0,pants:0,shoe:0},
+    {skin:2,eye:1,hair:3,shirt:1,pants:2,shoe:1},
+  ];
+}
+
+// ── Combat ──
+function beats(a,b) {
+  if (a==='dodge') return true;
+  if (b==='dodge') return false;
+  if (a==='roundhouse') return true;
+  if (a==='jab'      && b==='slap')    return true;
+  if (a==='uppercut' && b==='jab')     return true;
+  if (a==='knee'     && b==='slap')    return true;
+  if (a==='slap'     && b==='uppercut') return true;
+  return false;
+}
+
+function resolveRound(data) {
+  let m1=data.p1move, m2=data.p2move;
+  const attacks=['jab','roundhouse','slap','uppercut','knee'];
+
+  if (m1==='kiss'&&m2==='kiss') {
+    data.winner='both';
+    revealResult={m1,m2,a1:'idle',a2:'idle',msg:'👨‍❤️‍💋‍👨 love wins!',hp:data.hp,winner:'both',hit1:false,hit2:false};
+    gameData=data; spawnConfetti(); return;
+  }
+  if (m1==='kiss') m1='miss';
+  if (m2==='kiss') m2='miss';
+
+  let luckyMsg='';
+  if (!data.randomizerUsed) {
+    if (Math.random()<0.15) {
+      data.randomizerUsed=true;
+      const who=Math.random()<0.5?1:2;
+      if (who===1&&m1!=='dodge'){m1='dodge';luckyMsg='🎲 Lucky! P1 got a surprise dodge!';}
+      else if(who===2&&m2!=='dodge'){m2='dodge';luckyMsg='🎲 Lucky! P2 got a surprise dodge!';}
+    }
+  }
+
+  let dmg1=0,dmg2=0;
+  const p1dodge=m1==='dodge',p2dodge=m2==='dodge';
+  const p1atk=attacks.includes(m1),p2atk=attacks.includes(m2);
+  if (p1atk) dmg2=(p2dodge||beats(m2,m1))?0:1;
+  if (p2atk) dmg1=(p1dodge||beats(m1,m2))?0:1;
+
+  let msg=luckyMsg;
+  if (!msg) {
+    if      (p1dodge&&p2dodge)             msg='both dodged — standoff!';
+    else if (p1dodge&&p2atk)              msg='P1 dodged P2\'s '+m2+'!';
+    else if (p2dodge&&p1atk)              msg='P2 dodged P1\'s '+m1+'!';
+    else if (!dmg1&&!dmg2&&p1atk&&p2atk) msg=m1+' vs '+m2+' — cancelled!';
+    else if (dmg1&&dmg2)                  msg='both landed hits!';
+    else if (dmg2)                        msg='P1\'s '+m1+' hit P2!';
+    else if (dmg1)                        msg='P2\'s '+m2+' hit P1!';
+    else                                  msg='no damage!';
+  }
+
+  const hp=[
+    Math.max(0,(data.hp[0]||MAX_HP)-dmg1),
+    Math.max(0,(data.hp[1]||MAX_HP)-dmg2),
+  ];
+  data.hp=hp;
+  let winner=null;
+  if (hp[0]<=0&&hp[1]<=0){winner=0;msg='draw — both knocked out!';}
+  else if (hp[0]<=0) winner=2;
+  else if (hp[1]<=0) winner=1;
+  data.winner=winner;
+
+  const anim={jab:'punch',roundhouse:'kick',slap:'slap',uppercut:'uppercut',knee:'kick'};
+  const a1=dmg2>0?(anim[m1]||'punch'):(p1dodge?'dodge':'idle');
+  const a2=dmg1>0?(anim[m2]||'punch'):(p2dodge?'dodge':'idle');
+  revealResult={m1,m2,a1,a2,msg,hp,winner,hit1:dmg1>0,hit2:dmg2>0};
+  gameData=data;
+  if (winner!==null&&winner!==0) spawnConfetti();
+}
+
+// ── Draw helpers ──
+function rr(x,y,w,h,r,col){
+  ctx.fillStyle=col; ctx.beginPath(); ctx.roundRect(x,y,w,h,r); ctx.fill();
+}
+function lbl(text,x,y,size,col,align){
+  ctx.fillStyle=col||COL.dark;
+  ctx.font=(size||13)+'px "Courier New"';
+  ctx.textAlign=align||'center';
+  ctx.fillText(text,x,y);
+}
+function drawBtn(x,y,w,h,bg,text,fg,action){
+  rr(x,y,w,h,8,bg);
+  ctx.fillStyle=fg||COL.white;
+  ctx.font='bold 12px "Courier New"';
+  ctx.textAlign='center';
+  ctx.fillText(text,x+w/2,y+h/2+4);
+  btns.push({x,y,w,h,action});
+}
+function drawHearts(x,y,hp,col){
+  for (let i=0;i<MAX_HP;i++){
+    ctx.fillStyle=i<hp?col:'#ddd';
+    ctx.beginPath();
+    const hx=x+i*18,hy=y;
+    ctx.arc(hx-3,hy,4,Math.PI,0); ctx.arc(hx+3,hy,4,Math.PI,0);
+    ctx.lineTo(hx,hy+9); ctx.closePath(); ctx.fill();
+  }
+}
+
+// ── Boyfriend renderer ──
+function drawBF(cfg,cx,groundY,flip,action,crowned){
+  if (!cfg) return;
+  ctx.save();
+  if (flip){ctx.translate(cx*2,0);ctx.scale(-1,1);}
+  const S=SKINS[cfg.skin],E=EYES[cfg.eye],HC=HAIR_COLORS[cfg.hair].color;
+  const SH=SHIRTS[cfg.shirt].color,stripe=SHIRTS[cfg.shirt].stripe;
+  const P=PANTS[cfg.pants].color,SK=SHOES[cfg.shoe].color,SL=SHOES[cfg.shoe].sole;
+  let ox=0,oy=0;
+  if(action==='punch'||action==='slap'){ox=flip?-8:8;oy=-2;}
+  if(action==='uppercut'){ox=flip?-6:6;oy=-6;}
+  if(action==='kick'){oy=-4;}
+  if(action==='dodge'){ox=flip?8:-8;}
+  if(action==='hit'){ox=flip?10:-10;oy=4;}
+  const bx=cx+ox,by=groundY-90+oy;
+  ctx.fillStyle='rgba(80,60,60,0.12)';
+  ctx.beginPath();ctx.ellipse(bx,groundY-4,22,6,0,0,Math.PI*2);ctx.fill();
+  rr(bx-20,by+78,17,8,3,SL);rr(bx+3,by+78,17,8,3,SL);
+  rr(bx-19,by+72,15,9,3,SK);rr(bx+4,by+72,15,9,3,SK);
+  rr(bx-14,by+52,14,28,3,P);rr(bx+1,by+52,14,28,3,P);rr(bx-14,by+50,28,14,3,P);
+  if(stripe){
+    rr(bx-15,by+28,30,26,4,SH);
+    ctx.save();ctx.beginPath();ctx.roundRect(bx-15,by+28,30,26,4);ctx.clip();
+    for(let i=0;i<5;i++){ctx.fillStyle='#A8DCAB';ctx.fillRect(bx-15,by+28+i*6,30,3);}
+    ctx.restore();
+  }else{rr(bx-15,by+28,30,26,4,SH);}
+  rr(bx-5,by+26,10,8,3,S);
+  if(action==='punch'){
+    rr(bx-19,by+32,10,18,4,S);rr(bx+17,by+30,10,10,4,S);
+    ctx.fillStyle='#c0392b';ctx.beginPath();ctx.arc(bx+28,by+33,6,0,Math.PI*2);ctx.fill();
+  }else if(action==='uppercut'){
+    rr(bx-19,by+32,10,18,4,S);rr(bx+9,by+18,10,22,4,S);
+    ctx.fillStyle='#c0392b';ctx.beginPath();ctx.arc(bx+14,by+14,6,0,Math.PI*2);ctx.fill();
+  }else if(action==='slap'){
+    rr(bx-19,by+32,10,18,4,S);
+    ctx.save();ctx.translate(bx+22,by+30);ctx.rotate(0.5);
+    rr(-5,-5,18,10,3,S);ctx.restore();
+  }else if(action==='kick'){
+    rr(bx-19,by+32,10,18,4,S);rr(bx+9,by+32,10,18,4,S);
+    ctx.save();ctx.translate(bx+10,by+52);ctx.rotate(-0.7);
+    rr(-5,-5,12,22,3,P);rr(-4,14,14,9,3,SK);ctx.restore();
+  }else{
+    rr(bx-19,by+32,10,20,4,S);rr(bx+9,by+32,10,20,4,S);
+  }
+  rr(bx-14,by+6,28,28,8,S);
+  rr(bx-18,by+14,6,10,3,S);rr(bx+12,by+14,6,10,3,S);
+  ctx.fillStyle=HC;
+  ctx.beginPath();ctx.roundRect(bx-13,by+1,26,14,6);ctx.fill();
+  for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(bx-8+i*8,by+12,5,0,Math.PI);ctx.fill();}
+  ctx.beginPath();ctx.roundRect(bx-16,by+4,5,12,3);ctx.fill();
+  ctx.beginPath();ctx.roundRect(bx+11,by+4,5,12,3);ctx.fill();
+  ctx.fillStyle=E;
+  ctx.beginPath();ctx.ellipse(bx-7,by+16,4,4,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(bx+7,by+16,4,4,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.ellipse(bx-6,by+15,1.5,1.5,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(bx+8,by+15,1.5,1.5,0,0,Math.PI*2);ctx.fill();
+  if(action==='hit'){
+    ctx.strokeStyle='#a04040';ctx.lineWidth=2;ctx.lineCap='round';
+    ctx.beginPath();ctx.arc(bx,by+24,5,0.2,Math.PI-0.2);ctx.stroke();
+  }else{
+    ctx.strokeStyle='#7a5040';ctx.lineWidth=1.8;ctx.lineCap='round';
+    ctx.beginPath();ctx.arc(bx,by+22,5,0,Math.PI);ctx.stroke();
+  }
+  if(crowned){
+    ctx.fillStyle=COL.gold;
+    ctx.beginPath();
+    ctx.moveTo(bx-12,by-4);ctx.lineTo(bx-12,by-14);ctx.lineTo(bx-6,by-9);
+    ctx.lineTo(bx,by-18);ctx.lineTo(bx+6,by-9);ctx.lineTo(bx+12,by-14);
+    ctx.lineTo(bx+12,by-4);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#e74c3c';
+    [[bx-8,by-13],[bx,by-16],[bx+8,by-13]].forEach(([x,y])=>{
+      ctx.beginPath();ctx.arc(x,y,2.5,0,Math.PI*2);ctx.fill();
+    });
+  }
+  ctx.restore();
+}
+
+// ── Screens ──
+function drawLobby(){
+  ctx.fillStyle=COL.cream;ctx.fillRect(0,0,W,H);
+  rr(0,0,W,60,0,COL.lightGreen);
+  lbl('💘 BOYFRIEND BUILDER BRAWL 💘',W/2,36,19,COL.dark);
+  lbl('each player on their own device',W/2,54,11,COL.darkGreen);
+  btns=[];
+  drawBtn(W/2-170,90,150,46,COL.darkGreen,'CREATE ROOM',COL.white,'create');
+  lbl('start a new game',W/2-95,148,10,COL.mid);
+  drawBtn(W/2+20,90,150,46,COL.blush,'JOIN ROOM',COL.dark,'openjoin');
+  lbl('enter a code',W/2+95,148,10,COL.mid);
+  rr(W/2-110,166,220,46,8,COL.white);
+  ctx.strokeStyle=joinActive?COL.darkGreen:COL.lightGreen;ctx.lineWidth=2;
+  ctx.beginPath();ctx.roundRect(W/2-110,166,220,46,8);ctx.stroke();
+  lbl(joinInput.length?joinInput:'enter code...',W/2,194,16,joinInput.length?COL.dark:'#bbb');
+  btns.push({x:W/2-110,y:166,w:220,h:46,action:'inputfocus'});
+  if(statusMsg)lbl(statusMsg,W/2,226,11,'#c0392b');
+  if(joinActive){
+    const keys='ABCDEFGHJKLMNPQRSTUVWXYZ⌫'.split('');
+    const kw=34,kh=30,cols=8,sx=W/2-cols/2*(kw+4)+2,sy=240;
+    keys.forEach((k,i)=>{
+      const kx=sx+(i%cols)*(kw+4),ky=sy+Math.floor(i/cols)*(kh+4);
+      rr(kx,ky,kw,kh,6,k==='⌫'?COL.blush:COL.lightGreen);
+      lbl(k,kx+kw/2,ky+kh/2+5,12,COL.dark);
+      btns.push({x:kx,y:ky,w:kw,h:kh,action:'key',key:k});
+    });
+    drawBtn(W/2-55,H-52,110,36,COL.darkGreen,'JOIN ▶',COL.white,'join');
+  }else{
+    drawBtn(W/2-75,390,150,40,'#888','🧪 TEST MODE',COL.white,'testmode');
+    lbl('play as both players',W/2,444,10,COL.mid);
+  }
+}
+
+function drawBuild(){
+  const cfg=myChar();
+  ctx.fillStyle=COL.cream;ctx.fillRect(0,0,W,H);
+  rr(0,0,W,52,0,myPlayer===1?COL.lightGreen:COL.lilac);
+  lbl('PLAYER '+myPlayer+' — BUILD YOUR BOYFRIEND',W/2,30,17,COL.dark);
+  lbl(testMode?'test mode':'room: '+roomCode,W/2,48,10,COL.darkGreen);
+  rr(W/2-52,60,104,118,12,COL.white);
+  ctx.strokeStyle=COL.lightGreen;ctx.lineWidth=2;
+  ctx.beginPath();ctx.roundRect(W/2-52,60,104,118,12);ctx.stroke();
+  drawBF(cfg,W/2,172,false,'idle',false);
+  btns=[];
+  const sections=[
+    {label:'SKIN',      arr:SKINS,       key:'skin', type:'color'},
+    {label:'EYES',      arr:EYES,        key:'eye',  type:'color'},
+    {label:'HAIR COLOR',arr:HAIR_COLORS, key:'hair', type:'obj'},
+    {label:'SHIRT',     arr:SHIRTS,      key:'shirt',type:'obj'},
+    {label:'PANTS',     arr:PANTS,       key:'pants',type:'obj'},
+    {label:'SHOES',     arr:SHOES,       key:'shoe', type:'obj'},
+  ];
+  const colW=226,startY=192;
+  sections.forEach((sec,si)=>{
+    const col=si%3,row=Math.floor(si/3);
+    const bx=4+col*colW,by=startY+row*76;
+    lbl(sec.label,bx+6,by+13,10,COL.mid,'left');
+    sec.arr.forEach((item,i)=>{
+      const color=sec.type==='color'?item:item.color;
+      const sel=cfg[sec.key]===i;
+      const ix=bx+6+i*38,iy=by+18;
+      rr(ix,iy,30,30,7,color);
+      if(sel){ctx.strokeStyle=COL.darkGreen;ctx.lineWidth=2.5;ctx.beginPath();ctx.roundRect(ix-2,iy-2,34,34,9);ctx.stroke();}
+      if(sec.type==='obj')lbl(item.label,ix+15,iy+42,8,sel?COL.darkGreen:COL.mid);
+      btns.push({x:ix,y:iy,w:30,h:30,action:'pick',key:sec.key,val:i});
+    });
+  });
+  drawBtn(W/2-65,H-50,130,36,COL.darkGreen,'DONE  ▶',COL.white,'donebuild');
+}
+
+function drawWaiting(){
+  ctx.fillStyle=COL.cream;ctx.fillRect(0,0,W,H);
+  rr(0,0,W,56,0,COL.lightGreen);
+  lbl('WAITING FOR OTHER PLAYER...',W/2,34,18,COL.dark);
+  lbl('room: '+roomCode,W/2,52,11,COL.darkGreen);
+  rr(W/2-130,80,260,76,12,COL.white);
+  lbl('share this code with player '+(myPlayer===1?2:1)+':',W/2,108,12,COL.mid);
+  lbl(roomCode,W/2,148,38,COL.darkGreen);
+  drawBF(myChar(),W/2,340,false,'idle',false);
+  lbl('your boyfriend is ready!',W/2,370,12,COL.mid);
+  btns=[];
+}
+
+function drawFightSecret(){
+  ctx.fillStyle=COL.cream;ctx.fillRect(0,0,W,H);
+  rr(0,0,W,52,0,COL.blush);
+  lbl('PLAYER '+myPlayer+' — PICK YOUR MOVE',W/2,28,16,COL.dark);
+  lbl(testMode?'test mode — player '+myPlayer:'secret! opponent cannot see',W/2,46,10,COL.mid);
+  const hp=gameData?gameData.hp:[MAX_HP,MAX_HP];
+  drawHearts(34,34,hp[myPlayer-1],COL.darkGreen);
+  lbl('you',20,30,8,COL.mid,'left');
+  drawHearts(W-34-MAX_HP*18,34,hp[2-myPlayer],COL.lilac);
+  lbl('them',W-34-MAX_HP*18-14,30,8,COL.mid,'left');
+  btns=[];
+  const bw=190,bh=72,gap=8,rowX=(W-3*bw-2*gap)/2;
+  MOVES.forEach((m,i)=>{
+    const c=i%3,r=Math.floor(i/3);
+    const mx=rowX+c*(bw+gap),my=62+r*(bh+gap);
+    rr(mx,my,bw,bh,10,m.color);
+    lbl(m.label,mx+bw/2,my+28,14,COL.dark);
+    lbl(m.sub,mx+bw/2,my+50,10,COL.mid);
+    btns.push({x:mx,y:my,w:bw,h:bh,action:'move',move:m.move});
+  });
+  drawBF(myChar(),myPlayer===1?56:624,470,myPlayer===2,'idle',false);
+}
+
+function drawFightWaiting(){
+  ctx.fillStyle=COL.cream;ctx.fillRect(0,0,W,H);
+  rr(0,0,W,56,0,COL.darkGreen);
+  lbl('MOVE LOCKED IN! 🔒',W/2,36,20,COL.white);
+  lbl('waiting for other player...',W/2,54,12,'#A8DCAB');
+  drawBF(myChar(),W/2,320,false,'idle',false);
+  lbl('stay calm...',W/2,358,12,COL.mid);
+  btns=[];
+}
+
+function drawReveal(){
+  if(!revealResult)return;
+  const{m1,m2,a1,a2,msg,hp,winner,hit1,hit2}=revealResult;
+  const p1c=(gameData&&gameData.p1char)||chars[0];
+  const p2c=(gameData&&gameData.p2char)||chars[1];
+  tickConfetti();
+  ctx.fillStyle=COL.cream;ctx.fillRect(0,0,W,H);
+  if(confetti.length)drawConfetti();
+  rr(0,0,W,52,0,COL.darkGreen);
+  lbl('MOVES REVEALED!',W/2,32,20,COL.white);
+  const icons={jab:'👊',roundhouse:'🦵',dodge:'💨',slap:'👋',uppercut:'⬆️',knee:'🦿',kiss:'👨‍❤️‍💋‍👨',miss:'💨'};
+  rr(20,60,290,68,10,COL.blush);
+  lbl('PLAYER 1',165,82,12,COL.dark);
+  lbl((icons[m1]||'')+' '+m1.toUpperCase(),165,112,16,COL.dark);
+  rr(370,60,290,68,10,COL.lilac);
+  lbl('PLAYER 2',515,82,12,COL.dark);
+  lbl((icons[m2]||'')+' '+m2.toUpperCase(),515,112,16,COL.dark);
+  lbl(msg,W/2,150,12,COL.mid);
+  drawHearts(20,164,hp[0],COL.blush);
+  lbl('P1',8,160,9,COL.mid,'left');
+  drawHearts(W-20-MAX_HP*18,164,hp[1],COL.lilac);
+  lbl('P2',W-20-MAX_HP*18-14,160,9,COL.mid,'left');
+  btns=[];
+  if(winner!==undefined&&winner!==null){
+    ctx.fillStyle='rgba(250,244,240,0.92)';ctx.fillRect(0,0,W,H);
+    if(confetti.length)drawConfetti();
+    if(winner==='both'){
+      lbl('👨‍❤️‍💋‍👨 LOVE WINS! 👨‍❤️‍💋‍👨',W/2,94,22,COL.darkGreen);
+      lbl('both boyfriends matched!',W/2,126,13,COL.mid);
+      drawBF(p1c,220,360,false,'idle',true);
+      drawBF(p2c,460,360,true,'idle',true);
+      ctx.fillStyle=SKINS[p1c.skin];ctx.beginPath();ctx.roundRect(234,276,26,12,6);ctx.fill();
+      ctx.fillStyle=SKINS[p2c.skin];ctx.beginPath();ctx.roundRect(420,276,26,12,6);ctx.fill();
+      ctx.fillStyle='#d4956a';ctx.beginPath();ctx.roundRect(256,272,48,18,8);ctx.fill();
+      ctx.fillStyle='#e74c3c';
+      ctx.beginPath();ctx.arc(W/2-8,230,9,Math.PI,0);ctx.arc(W/2+8,230,9,Math.PI,0);
+      ctx.lineTo(W/2,248);ctx.closePath();ctx.fill();
+    }else if(winner===0){
+      lbl('DRAW! 🤝',W/2,200,32,COL.darkGreen);
+    }else{
+      lbl('👑 PLAYER '+winner+' WINS! 👑',W/2,150,28,COL.darkGreen);
+      lbl('their boyfriend is the moment.',W/2,188,13,COL.mid);
+      drawBF(winner===1?p1c:p2c,W/2,370,false,'idle',true);
+    }
+    drawBtn(W/2-70,H-66,140,44,COL.darkGreen,'PLAY AGAIN',COL.white,'restart');
+    return;
+  }
+  drawBF(p1c,165,380,false,hit1?'hit':a1,false);
+  drawBF(p2c,515,380,true,hit2?'hit':a2,false);
+  drawBtn(W/2-75,H-54,150,42,COL.darkGreen,'NEXT ROUND ▶',COL.white,'nextround');
+}
+
+// ── Loop ──
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  if     (state==='lobby')         drawLobby();
+  else if(state==='build')         drawBuild();
+  else if(state==='waiting_other') drawWaiting();
+  else if(state==='fight_secret')  drawFightSecret();
+  else if(state==='fight_waiting') drawFightWaiting();
+  else if(state==='fight_reveal')  drawReveal();
+  requestAnimationFrame(loop);
+}
+
+// ── Input ──
+C.addEventListener('click',async e=>{
+  const rect=C.getBoundingClientRect();
+  const sx=W/rect.width,sy=H/rect.height;
+  const mx=(e.clientX-rect.left)*sx,my=(e.clientY-rect.top)*sy;
+  for(const b of btns){
+    if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){
+      const a=b.action;
+      if     (a==='testmode')  startTestMode();
+      else if(a==='create')    await createRoom();
+      else if(a==='openjoin')  {joinActive=true;statusMsg='';}
+      else if(a==='inputfocus'){joinActive=true;statusMsg='';}
+      else if(a==='join')      await joinRoom();
+      else if(a==='key'){
+        if(b.key==='⌫')joinInput=joinInput.slice(0,-1);
+        else if(joinInput.length<4)joinInput+=b.key;
+      }
+      else if(a==='pick')      myChar()[b.key]=b.val;
+      else if(a==='donebuild') await doneBuild();
+      else if(a==='move')      await pickMove(b.move);
+      else if(a==='nextround') await doNextRound();
+      else if(a==='restart')   doRestart();
+      break;
+    }
+  }
+});
+
+loop();
+</script>
+</body>
+</html>
